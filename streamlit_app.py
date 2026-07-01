@@ -11,6 +11,7 @@ Uses the shared engine in combine.py.
 import os
 import tempfile
 
+import fitz  # PyMuPDF — used to render the preview images
 import streamlit as st
 
 from combine import combine, DEFAULT_ORION_PAGES
@@ -99,20 +100,40 @@ def main():
                     os.path.splitext(orion_file.name)[0] or "Presentation"
                 ) + " - Combined.pdf"
 
-                st.success("Done — download your combined presentation below.")
-                st.download_button(
-                    "⬇︎ Download combined PDF",
-                    data=pdf_bytes,
-                    file_name=download_name,
-                    mime="application/pdf",
-                    use_container_width=True,
-                )
+                # Render each page to a PNG so the preview shows on ANY browser
+                # (embedded PDFs don't render on mobile Safari / some browsers).
+                preview_imgs = []
+                with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+                    for page in doc:
+                        preview_imgs.append(page.get_pixmap(dpi=110).tobytes("png"))
+
+                # Store in session so the download click doesn't wipe the preview.
+                st.session_state["result"] = {
+                    "pdf": pdf_bytes, "name": download_name, "imgs": preview_imgs,
+                }
             except Exception as e:  # noqa: BLE001
+                st.session_state.pop("result", None)
                 st.error(f"Something went wrong:\n\n{e}")
                 st.info(
                     "Tip: if the PowerPoint won't convert, export it to PDF "
                     "(File ▸ Save As ▸ PDF) and upload that instead."
                 )
+
+    # ---- Result + preview (persists across reruns via session_state) ----------
+    result = st.session_state.get("result")
+    if result:
+        st.success("Done — download your combined presentation below.")
+        st.download_button(
+            "⬇︎ Download combined PDF",
+            data=result["pdf"],
+            file_name=result["name"],
+            mime="application/pdf",
+            use_container_width=True,
+        )
+        st.divider()
+        st.subheader(f"Preview — {len(result['imgs'])} pages")
+        for i, img in enumerate(result["imgs"]):
+            st.image(img, caption=f"Page {i + 1}", use_container_width=True)
 
     st.caption("Files are processed and discarded — nothing is stored.")
 
